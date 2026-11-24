@@ -56,6 +56,9 @@ type Strategy struct {
 
 type Publish struct {
 	Message
+	TemplateID   string            `json:"template_id,omitempty"`
+	TemplateName string            `json:"template_name,omitempty"`
+	Variables    map[string]string `json:"variables,omitempty"`
 	// Channels accepts account IDs or channel names. Use Targets for selectors.
 	// Set either Channels or Targets, or leave both empty for server routing.
 	Channels []string  `json:"-"`
@@ -123,4 +126,47 @@ type MessageDetail struct {
 	InboxDeliveries int64      `json:"inbox_deliveries"`
 	InboxRecipient  *string    `json:"inbox_recipient"`
 	Deliveries      []Delivery `json:"deliveries"`
+}
+
+type TemplateInput struct {
+	Name  string `json:"name"`
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	// Anser templates support Text and Markdown.
+	Format MessageFormat `json:"format"`
+	Shared *bool         `json:"shared,omitempty"`
+}
+
+type Template struct {
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	Title     string        `json:"title"`
+	Body      string        `json:"body"`
+	Format    MessageFormat `json:"format"`
+	Variables []string      `json:"variables"`
+	Shared    bool          `json:"shared"`
+	Builtin   bool          `json:"builtin"`
+	CanEdit   bool          `json:"can_edit"`
+	CreatedAt int64         `json:"created_at"`
+	UpdatedAt int64         `json:"updated_at"`
+}
+
+type SpeechConfig struct {
+	ServerURL string `json:"server_url"`
+	APIKey    string `json:"api_key"`
+	Model     string `json:"model"`
+	Voice     string `json:"voice"`
+}
+
+type SpeechDestination struct {
+	// Kind is inbox, topic, or channels. Specify Username for inbox or Name for topic.
+	Kind     string `json:"kind"`
+	Username string `json:"username,omitempty"`
+	Name     string `json:"name,omitempty"`
+}
+
+type SpeechSend struct {
+	Config      SpeechConfig      `json:"config"`
+	Message     Message           `json:"message"`
+	Destination SpeechDestination `json:"destination"`
 }

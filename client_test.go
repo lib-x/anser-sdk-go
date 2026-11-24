@@ -131,3 +131,100 @@ func TestHTTPErrorAndRedirect(t *testing.T) {
 		t.Fatal("client exposes key")
 	}
 }
+
+func TestTemplateAPI(t *testing.T) {
+	const definition = `{"id":"custom-id","name":"deploy","format":"text","variables":["service"]}`
+	var called atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Add(1)
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v1/send":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode: %v", err)
+			}
+			if body["template_id"] != "builtin.deployment" || body["title"] != nil || body["format"] != nil {
+				t.Errorf("invalid template request: %+v", body)
+			}
+			if value, ok := body["variables"].(map[string]any); !ok || value["service"] != "api" {
+				t.Errorf("missing variables: %+v", body)
+			}
+			w.WriteHeader(202)
+			fmt.Fprint(w, `{"message_id":"m1","status":"pending"}`)
+		case "GET /v1/templates":
+			fmt.Fprint(w, `{"items":[`+definition+`],"next_cursor":null}`)
+		case "POST /v1/templates", "GET /v1/templates/custom-id", "PUT /v1/templates/custom-id":
+			fmt.Fprint(w, definition)
+		case "DELETE /v1/templates/custom-id":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client, err := New(Config{ServerURL: server.URL, APIKey: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	_, err = client.Send(ctx, Publish{TemplateID: "builtin.deployment", Variables: map[string]string{"service": "api"}}, SendOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Send(ctx, Publish{TemplateID: "one", TemplateName: "two"}, SendOptions{})
+	if err == nil {
+		t.Fatal("accepted two references")
+	}
+	page, err := client.Templates(ctx, PageOptions{})
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("templates: %+v, %v", page, err)
+	}
+	input := TemplateInput{Name: "deploy", Body: "{{service}}", Format: Text}
+	out, err := client.CreateTemplate(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.Template(ctx, out.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.UpdateTemplate(ctx, out.ID, input); err != nil {
+		t.Fatal(err)
+	}
+	if err = client.DeleteTemplate(ctx, out.ID); err != nil {
+		t.Fatal(err)
+	}
+	if called.Load() != 6 {
+		t.Fatalf("expected six requests, got %d", called.Load())
+	}
+}
+
+func TestSendSpeech(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input SpeechSend
+		if r.Method != "POST" || r.URL.Path != "/v1/speech/send" ||
+			r.Header.Get("Idempotency-Key") != "speech-17" ||
+			json.NewDecoder(r.Body).Decode(&input) != nil ||
+			input.Destination.Kind != "inbox" || input.Destination.Username != "alice" {
+			t.Error("unexpected speech request")
+		}
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"message_id":"m1","status":"success"}`)
+	}))
+	defer server.Close()
+	client, err := New(Config{ServerURL: server.URL, APIKey: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := SpeechSend{
+		Config:      SpeechConfig{ServerURL: "https://speech.example", APIKey: "fixture-provider"},
+		Destination: SpeechDestination{Kind: "inbox", Username: "alice"},
+		Message:     Message{Body: "Your build is ready"},
+	}
+	receipt, err := client.SendSpeech(t.Context(), input, "speech-17")
+	if err != nil || receipt.MessageID != "m1" {
+		t.Fatalf("send speech: %+v, %v", receipt, err)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", input), "fixture-provider") {
+		t.Fatal("provider key in diagnostics")
+	}
+}

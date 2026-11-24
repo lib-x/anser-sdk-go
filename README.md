@@ -7,7 +7,7 @@ Official Go client for the [Anser](https://github.com/ca-x/anser) v1 notificatio
 Requires Go 1.24 or newer and a running Anser server.
 
 ```sh
-go get github.com/lib-x/anser-sdk-go@v0.1.0
+go get github.com/lib-x/anser-sdk-go@v0.2.0
 ```
 
 ## Authenticate
@@ -59,6 +59,16 @@ func main() {
 ```
 
 An HTTP `202` confirms that Anser queued the message. The message can still be pending when you first read it. Save the message ID and check the message detail and its delivery attempts as needed. Use the same key to query a message created with a non-admin key.
+
+## Send with a template
+
+Template methods require Anser 0.6.0 or later. Set either `Publish.TemplateID` or `Publish.TemplateName` and supply `Publish.Variables`. The server supplies the final title, body, and format. The [complete example](examples/template/main.go) uses `builtin.deployment` and omits the template source. Use the same `ANSER_IDEMPOTENCY_KEY` if you retry across processes.
+
+The SDK also lists, reads, creates, updates, and deletes templates. API keys with `send` can use built-in and shared templates. Private templates require the owner’s session, and creating a shared template requires a global administrator. See [the template guide](https://github.com/ca-x/anser/blob/main/docs/notification-templates.en.md).
+
+## Send a voice notification
+
+Use `SendSpeech` with a global administrator credential and an OpenAI-compatible speech configuration. The server renders an MP3 and sends it to an inbox, topic, or default route. Topic and channel voice delivery requires a reachable HTTPS `ANSER_PUBLIC_URL`. See [speech plugin options](https://github.com/ca-x/anser/tree/main/anser-plugins/openai-tts).
 
 ## API coverage
 

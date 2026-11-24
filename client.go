@@ -26,6 +26,16 @@ type Config struct {
 	Timeout   time.Duration
 }
 
+// Format omits the API key from formatted diagnostics.
+func (Config) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, "anser.Config")
+}
+
+// Format omits the provider key from formatted diagnostics.
+func (SpeechConfig) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, "anser.SpeechConfig")
+}
+
 // Client is safe for concurrent use after construction.
 type Client struct {
 	base string
@@ -89,6 +99,14 @@ func New(config Config) (*Client, error) {
 	}, nil
 }
 
+// SendSpeech synthesizes and delivers an MP3. Use a global administrator credential.
+func (c *Client) SendSpeech(ctx context.Context, input SpeechSend, idempotencyKey string) (Receipt, error) {
+	if idempotencyKey != "" && (len(idempotencyKey) > 128 || !graphic(idempotencyKey)) {
+		return Receipt{}, errors.New("anser: invalid idempotency key")
+	}
+	return request[Receipt](ctx, c, http.MethodPost, "/speech/send", input, idempotencyKey)
+}
+
 func (c *Client) Send(ctx context.Context, input Publish, options SendOptions) (Receipt, error) {
 	return c.deliver(ctx, "/send", input, options)
 }
@@ -110,6 +128,10 @@ func (c *Client) Message(ctx context.Context, id string) (MessageDetail, error) 
 }
 
 func (c *Client) Messages(ctx context.Context, options PageOptions) (Page[MessageDetail], error) {
+	return request[Page[MessageDetail]](ctx, c, http.MethodGet, pagePath("/messages", options), nil, "")
+}
+
+func pagePath(path string, options PageOptions) string {
 	query := url.Values{}
 	if options.Cursor != "" {
 		query.Set("cursor", options.Cursor)
@@ -117,7 +139,40 @@ func (c *Client) Messages(ctx context.Context, options PageOptions) (Page[Messag
 	if options.Limit != 0 {
 		query.Set("limit", strconv.FormatUint(uint64(options.Limit), 10))
 	}
-	return request[Page[MessageDetail]](ctx, c, http.MethodGet, withQuery("/messages", query), nil, "")
+	return withQuery(path, query)
+}
+
+func (c *Client) Templates(ctx context.Context, options PageOptions) (Page[Template], error) {
+	return request[Page[Template]](ctx, c, http.MethodGet, pagePath("/templates", options), nil, "")
+}
+
+func (c *Client) Template(ctx context.Context, id string) (Template, error) {
+	path, err := resource("/templates/", id)
+	if err != nil {
+		return Template{}, err
+	}
+	return request[Template](ctx, c, http.MethodGet, path, nil, "")
+}
+
+func (c *Client) CreateTemplate(ctx context.Context, input TemplateInput) (Template, error) {
+	return request[Template](ctx, c, http.MethodPost, "/templates", input, "")
+}
+
+func (c *Client) UpdateTemplate(ctx context.Context, id string, input TemplateInput) (Template, error) {
+	path, err := resource("/templates/", id)
+	if err != nil {
+		return Template{}, err
+	}
+	return request[Template](ctx, c, http.MethodPut, path, input, "")
+}
+
+func (c *Client) DeleteTemplate(ctx context.Context, id string) error {
+	path, err := resource("/templates/", id)
+	if err != nil {
+		return err
+	}
+	_, err = request[struct{}](ctx, c, http.MethodDelete, path, nil, "")
+	return err
 }
 
 func (c *Client) Subscribe(ctx context.Context, topic string, input SubscriptionInput) (Subscription, error) {
@@ -145,6 +200,17 @@ func (c *Client) deliver(ctx context.Context, path string, input Publish, option
 	if len(options.IdempotencyKey) > 128 || (options.IdempotencyKey != "" && !graphic(options.IdempotencyKey)) {
 		return Receipt{}, errors.New("anser: invalid idempotency key")
 	}
+	if input.TemplateID != "" && input.TemplateName != "" {
+		return Receipt{}, errors.New("anser: choose a template ID or name")
+	}
+	if input.TemplateID != "" || input.TemplateName != "" {
+		if input.Title != "" || input.Body != "" || input.Format != "" {
+			return Receipt{}, errors.New("anser: the template supplies title, body and format")
+		}
+	} else if len(input.Variables) != 0 {
+		return Receipt{}, errors.New("anser: template variables require a template ID or name")
+	}
+
 	if len(input.Channels) > 0 && len(input.Targets) > 0 {
 		return Receipt{}, errors.New("anser: choose channels or targets")
 	}
